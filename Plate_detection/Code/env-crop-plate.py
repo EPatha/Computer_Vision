@@ -1,63 +1,68 @@
-import torch
 import os
-from PIL import Image
+import cv2
+import torch
 
-# Path to YOLOv5 weights and input images
-yolo_weights = 'yolov5s.pt'  # Gantilah dengan model YOLO yang sudah dilatih
-cropped_images_dir = '/home/ep/Documents/Github/myenv/plate-detection-env/dataset/3.TL.Kartini_cropped/'
-plat_number_output_dir = '/home/ep/Documents/Github/myenv/plate-detection-env/dataset/plat_numbers/'
+# Path ke folder input dan output
+input_dir = '/home/ep/Documents/Github/myenv/plate-detection-env/dataset/3.TL.Kartini_cropped/'
+output_dir = '/home/ep/Documents/Github/myenv/plate-detection-env/dataset/plat_numbers/'
 
-# Membuat direktori output untuk plat nomor
-os.makedirs(plat_number_output_dir, exist_ok=True)
+# Buat direktori output utama jika belum ada
+os.makedirs(output_dir, exist_ok=True)
 
-# Memuat model YOLO
+# Memuat model YOLO (pastikan model sudah dilatih untuk mendeteksi plat nomor)
+yolo_weights = 'yolov5s.pt'  # Ganti dengan path model YOLO Anda
 model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolo_weights)
 
-# Definisikan kelas plat nomor (sesuaikan dengan model kamu)
-classes_of_interest = ['license_plate']
+# Fungsi untuk proses crop kotak plat nomor (tanpa membaca teks)
+def process_image(image_path, output_folder):
+    # Load gambar menggunakan OpenCV
+    img = cv2.imread(image_path)
 
-# Proses setiap folder dalam direktori cropped images
-for folder_name in os.listdir(cropped_images_dir):
-    folder_path = os.path.join(cropped_images_dir, folder_name)
+    # Periksa apakah gambar berhasil dimuat
+    if img is None:
+        print(f"Error: Tidak dapat memuat gambar {image_path}")
+        return
 
-    if os.path.isdir(folder_path):  # Pastikan hanya folder yang diproses
-        # Buat folder output untuk plat nomor
-        output_folder = os.path.join(plat_number_output_dir, folder_name)
-        os.makedirs(output_folder, exist_ok=True)
+    # Konversi BGR ke RGB
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # Proses setiap gambar dalam folder
-        for image_name in os.listdir(folder_path):
-            image_path = os.path.join(folder_path, image_name)
+    # Deteksi menggunakan YOLO
+    results = model(img_rgb)
 
-            # Memuat gambar menggunakan PIL
-            img = Image.open(image_path)
+    # Ambil deteksi kotak plat nomor
+    detections = results.pandas().xyxy[0]
+    plat_number_detected = False
 
-            # Melakukan deteksi menggunakan model YOLO
-            results = model(img)
+    for _, detection in detections.iterrows():
+        if detection['name'] == 'license_plate':  # Deteksi kotak plat nomor
+            # Mendapatkan koordinat bounding box
+            x_min, y_min, x_max, y_max = map(int, [detection['xmin'], detection['ymin'], detection['xmax'], detection['ymax']])
 
-            # Mengonversi hasil deteksi ke dataframe pandas
-            detections = results.pandas().xyxy[0]
+            # Crop gambar kotak plat nomor
+            cropped_img = img[y_min:y_max, x_min:x_max]
 
-            # Memfilter deteksi untuk plat nomor
-            plat_number_detected = False
-            for _, detection in detections.iterrows():
-                if detection['name'] == 'license_plate':  # Deteksi plat nomor
-                    # Mendapatkan koordinat bounding box
-                    x_min, y_min, x_max, y_max = map(int, [detection['xmin'], detection['ymin'], detection['xmax'], detection['ymax']])
+            # Simpan hasil crop
+            os.makedirs(output_folder, exist_ok=True)  # Buat folder output jika belum ada
+            output_path = os.path.join(output_folder, os.path.basename(image_path).replace('.jpg', '-plat.jpg'))
+            cv2.imwrite(output_path, cropped_img)
+            print(f"Plat nomor disimpan: {output_path}")
+            plat_number_detected = True
 
-                    # Crop gambar untuk plat nomor
-                    cropped_img = img.crop((x_min, y_min, x_max, y_max))
+    if not plat_number_detected:
+        print(f"Tidak ada plat nomor yang terdeteksi di {image_path}")
 
-                    # Membuat nama unik untuk gambar cropped plat nomor
-                    cropped_image_name = f"{os.path.splitext(image_name)[0]}-plat.jpg"
-                    cropped_image_path = os.path.join(output_folder, cropped_image_name)
+# Iterasi rekursif melalui folder dan subfolder
+for root, dirs, files in os.walk(input_dir):
+    for file_name in files:
+        # Proses hanya file gambar
+        if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+            file_path = os.path.join(root, file_name)
 
-                    # Menyimpan gambar cropped plat nomor
-                    cropped_img.save(cropped_image_path)
-                    plat_number_detected = True
-                    print(f"Plat nomor ditemukan dan disimpan: {cropped_image_name}")
+            # Buat path folder output yang sesuai
+            relative_path = os.path.relpath(root, input_dir)
+            output_folder = os.path.join(output_dir, relative_path)
 
-            if not plat_number_detected:
-                print(f"Tidak ada plat nomor yang terdeteksi di {image_name}")
+            # Proses gambar
+            process_image(file_path, output_folder)
 
-print("Proses deteksi dan crop plat nomor selesai! Semua hasil disimpan di:", plat_number_output_dir)
+print("Proses deteksi dan crop selesai!")
