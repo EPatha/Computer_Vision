@@ -1,79 +1,66 @@
 import cv2
-import glob
 import os
-import numpy as np
-import imutils
+import glob
+import shutil
 
-# Path to the folder containing images
+# Input dan output folder
 image_folder = "/home/ep/Documents/Github/Computer_Vision/ESRGAN-master/results/**/*"
-
-# Base output folder where cropped plates will be saved
 output_base_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/cropped_plat_numbers"
 
-# Ensure the output folder exists
+# Pastikan output folder ada
 os.makedirs(output_base_folder, exist_ok=True)
 
-# Get a list of all image paths in the folder
-image_paths = glob.glob(image_folder, recursive=True)
+# Inisialisasi detektor Haar Cascade untuk plat nomor
+plate_cascade_path = cv2.data.haarcascades + 'haarcascade_russian_plate_number.xml'
+plate_cascade = cv2.CascadeClassifier(plate_cascade_path)
 
-# Process each image
-for image_path in image_paths:
-    print(f"Processing: {image_path}")
+# Fungsi untuk mendeteksi dan memproses plat nomor
+def process_image(image_path, output_folder):
+    # Baca gambar
     img = cv2.imread(image_path)
     if img is None:
-        print(f"Unable to read image: {image_path}")
-        continue
-
-    # Convert to grayscale
+        print(f"[Error] Failed to read image: {image_path}")
+        return
+    
+    # Konversi ke grayscale untuk deteksi
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Deteksi plat nomor
+    plates = plate_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 20))
+    
+    # Ambil nama folder dari path file gambar
+    folder_name = os.path.basename(os.path.dirname(image_path))  # Nama folder asal file gambar
+    image_output_folder = os.path.join(output_folder, folder_name)
+    os.makedirs(image_output_folder, exist_ok=True)
 
-    # Apply filters and edge detection
-    bfilter = cv2.bilateralFilter(gray, 11, 17, 17)  # Noise reduction
-    edged = cv2.Canny(bfilter, 30, 200)  # Edge detection
+    if len(plates) > 0:
+        # Jika plat nomor ditemukan, crop dan simpan
+        base_filename = os.path.basename(image_path)
+        for (x, y, w, h) in plates:
+            cropped_plate = img[y:y+h, x:x+w]
+            output_path = os.path.join(image_output_folder, base_filename)
+            cv2.imwrite(output_path, cropped_plate)
+            print(f"[Cropped] Saved: {output_path}")
+        print(f"[Folder Created] {image_output_folder}")
+    else:
+        # Jika tidak ada plat nomor, tambahkan prefix (not)
+        base_filename = os.path.basename(image_path)
+        not_output_path = os.path.join(image_output_folder, f"(not){base_filename}")
+        shutil.copy(image_path, not_output_path)
+        print(f"[No Plate] Saved original with (not): {not_output_path}")
+        print(f"[Folder Created] {image_output_folder}")
 
-    # Find contours
-    keypoints = cv2.findContours(edged.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    contours = imutils.grab_contours(keypoints)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
+# Loop melalui semua gambar dalam folder
+image_paths = glob.glob(image_folder, recursive=True)
 
-    # Detect the location of the contour (license plate)
-    location = None
-    for contour in contours:
-        approx = cv2.approxPolyDP(contour, 10, True)
-        if len(approx) == 4:  # Looking for a quadrilateral (license plate)
-            location = approx
-            break
+for image_path in image_paths:
+    if image_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+        process_image(image_path, output_base_folder)
 
-    if location is None:
-        # If no plate is detected, save the original image with a new name
-        not_detected_name = f"i(not detected)_{os.path.basename(image_path)}"
-        output_path = os.path.join(output_base_folder, not_detected_name)
-        cv2.imwrite(output_path, img)
-        print(f"No plate detected. Saved as: {not_detected_name}")
-        continue
+# Tambahan: Outputkan struktur folder yang diakses
+print("\n[INFO] Accessed Folders:")
+for root, dirs, files in os.walk(output_base_folder):
+    if files or dirs:
+        print(f"{root}/*")
 
-    # Create a mask for the detected contour
-    mask = np.zeros(gray.shape, np.uint8)
-    new_image = cv2.drawContours(mask, [location], 0, 255, -1)
-    new_image = cv2.bitwise_and(img, img, mask=mask)
-
-    # Extract the region of interest (license plate area)
-    (x, y) = np.where(mask == 255)
-    (x1, y1) = (np.min(x), np.min(y))
-    (x2, y2) = (np.max(x), np.max(y))
-    cropped_image = img[x1:x2+1, y1:y2+1]
-
-    # Save the cropped plate in the same folder structure
-    relative_path = os.path.relpath(image_path, start=os.path.dirname(image_folder))
-    folder_structure = os.path.dirname(relative_path).replace(os.sep, "_")
-
-    # Create the output folder path based on the folder structure
-    output_folder = os.path.join(output_base_folder, folder_structure)
-    os.makedirs(output_folder, exist_ok=True)
-
-    output_name = f"{os.path.basename(image_path)}"
-    output_path = os.path.join(output_folder, output_name)
-
-    # Save the cropped plate image
-    cv2.imwrite(output_path, cropped_image)
-    print(f"Plate detected. Cropped plate saved as: {output_path}")
+print("[INFO] Processing completed.")
