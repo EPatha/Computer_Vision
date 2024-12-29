@@ -1,64 +1,152 @@
+import cv2
+import numpy as np
 import os
-import pytesseract
-from PIL import Image
+import easyocr
 import re
-import shutil
 
-# Fungsi untuk membaca dan mendeteksi plat nomor
-def detect_plate_number(image_path):
+# Pola untuk validasi digit awal (Asal Kota)
+valid_prefixes = [
+    'AA', 'AD', 'K', 'R', 'G', 'H', 'AB', 'D', 'F', 'E', 'Z', 'T', 'A', 'B', 'AG', 'AE', 'L', 'M', 'N', 
+    'S', 'W', 'P', 'DK', 'ED', 'EA', 'EB', 'DH', 'DR', 'KU', 'KT', 'DA', 'KB', 'KH', 'DC', 'DD', 'DN', 
+    'DT', 'DL', 'DM', 'DB', 'BA', 'BB', 'BD', 'BE', 'BG', 'BH', 'BK', 'BL', 'BM', 'BN', 'DE', 'DG', 'PA', 'PB'
+]
+
+# Fungsi untuk memvalidasi digit plat nomor sesuai pola
+def validate_plate_number(detected_text):
+    # Pisahkan teks menjadi bagian-bagian plat nomor
+    parts = detected_text.split()
+    
+    if len(parts) < 3:
+        return False  # Tidak ada cukup bagian (prefix, middle, suffix)
+
+    # Validasi digit awal (Asal Kota)
+    prefix = parts[0]
+    if prefix not in valid_prefixes:
+        return False
+    
+    # Validasi digit tengah (Kategori Kendaraan)
+    try:
+        middle = int(parts[1])
+        if middle < 1 or middle > 9999:
+            return False
+    except ValueError:
+        return False
+    
+    # Validasi digit belakang (Jenis Kendaraan)
+    suffix = parts[2]
+    if len(suffix) > 4 or not re.match(r'^[A-Za-z0-9]*$', suffix):
+        return False
+
+    return True
+
+# Fungsi untuk meningkatkan gambar
+def preprocess_image(image_path):
     # Membaca gambar
-    img = Image.open(image_path)
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+    # Histogram Equalization untuk meningkatkan kontras
+    img = cv2.equalizeHist(img)
+
+    # Adaptive Thresholding untuk memisahkan teks dari latar belakang
+    img = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
+
+    # Canny Edge Detection untuk menemukan tepi-tepi penting
+    img = cv2.Canny(img, 100, 200)
+
+    # Morphological Transformations untuk memperbaiki objek dalam gambar
+    kernel = np.ones((3, 3), np.uint8)
+    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+
+    # Resize untuk menjaga konsistensi ukuran gambar
+    img = cv2.resize(img, (640, 480))
     
-    # Menggunakan pytesseract untuk mengekstrak teks dari gambar
-    extracted_text = pytesseract.image_to_string(img, config='--psm 8').strip()
-    
-    # Menentukan pola untuk plat nomor sesuai dengan yang Anda jelaskan
-    # Pola plat nomor: Digit awal (asal kota), Digit tengah (kategori kendaraan), Digit belakang (jenis kendaraan)
-    pattern = r"([A-Z]{1,2})\s*(\d{1,4})\s*([A-Z0-9]{1,4})"
-    match = re.match(pattern, extracted_text)
-    
-    if match:
-        asal_kota = match.group(1)
-        kategori_kendaraan = match.group(2)
-        jenis_kendaraan = match.group(3)
+    return img
+
+# Fungsi untuk deteksi plat nomor menggunakan kontur dan pola persegi panjang
+def detect_plate(image_path):
+    img = cv2.imread(image_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Thresholding untuk mendapatkan biner gambar
+    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+
+    # Menemukan kontur
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    plates = []
+    for cnt in contours:
+        # Menghitung panjang dan lebar kontur
+        approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
         
-        # Menggabungkan hasil deteksi menjadi nama file baru
-        detected_plate_number = f"{asal_kota}{kategori_kendaraan}{jenis_kendaraan}"
-        return detected_plate_number
-    else:
-        return None
+        # Filter kontur berbentuk persegi panjang (plat nomor)
+        if len(approx) == 4:  # Plat nomor biasanya berbentuk persegi panjang
+            plates.append(approx)
 
-# Fungsi untuk memindahkan dan mengganti nama gambar
-def process_images(input_folder, output_folder):
-    # Membaca semua subfolder dan gambar dalam folder input
-    for root, dirs, files in os.walk(input_folder):
-        for file in files:
-            if file.endswith(('jpg', 'jpeg', 'png')):
-                image_path = os.path.join(root, file)
-                
-                # Deteksi plat nomor dari gambar
-                plate_number = detect_plate_number(image_path)
-                
-                if plate_number:
-                    # Membuat folder output berdasarkan folder asal
-                    relative_path = os.path.relpath(root, input_folder)
-                    new_folder = os.path.join(output_folder, 'named_plate', relative_path, plate_number)
-                    
-                    # Membuat folder jika belum ada
-                    os.makedirs(new_folder, exist_ok=True)
-                    
-                    # Membuat path baru untuk gambar dengan nama hasil deteksi
-                    new_image_path = os.path.join(new_folder, f"{plate_number}.jpg")
-                    
-                    # Menyalin gambar ke folder tujuan dengan nama baru
-                    shutil.copy(image_path, new_image_path)
-                    print(f"Processed {image_path} -> {new_image_path}")
-                else:
-                    print(f"Failed to detect plate number in {image_path}")
+    return plates, img
+
+# Fungsi untuk melakukan OCR dengan EasyOCR
+def ocr_plate(plate_image):
+    reader = easyocr.Reader(['en'])
+    result = reader.readtext(plate_image)
+    
+    # Mengambil teks yang terdeteksi
+    detected_text = " ".join([text[1] for text in result])
+    return detected_text
+
+# Fungsi untuk menyimpan gambar yang terdeteksi dan menamai gambar sesuai dengan hasil deteksi
+def save_detected_plate(image_path, detected_text, output_dir):
+    # Membaca gambar asli
+    img = cv2.imread(image_path)
+    
+    # Menyimpan gambar dengan nama sesuai dengan hasil OCR
+    file_name = os.path.basename(image_path)
+    new_file_name = f"{detected_text.replace(' ', '_')}.jpg"  # Menggunakan hasil OCR sebagai nama file
+    output_path = os.path.join(output_dir, new_file_name)
+
+    cv2.imwrite(output_path, img)
+    print(f"Image saved at {output_path}")
+
+# Main function untuk memproses gambar
+def process_image(image_path, output_dir):
+    # Preprocessing gambar untuk meningkatkan deteksi
+    processed_img = preprocess_image(image_path)
+    
+    # Deteksi plat nomor dengan kontur dan pola persegi panjang
+    plates, original_img = detect_plate(image_path)
+
+    # Jika plat nomor ditemukan, lakukan OCR pada tiap plat nomor yang terdeteksi
+    if plates:
+        for plate in plates:
+            # Membuat bounding box untuk plat nomor
+            x, y, w, h = cv2.boundingRect(plate)
+            plate_img = original_img[y:y+h, x:x+w]
             
-# Path ke folder input dan output
-input_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/cropped_rlt"
-output_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset"
+            # Menggunakan EasyOCR untuk membaca plat nomor
+            detected_text = ocr_plate(plate_img)
+            print(f"Detected text: {detected_text}")
+            
+            # Validasi plat nomor berdasarkan pola
+            if validate_plate_number(detected_text):
+                print(f"Valid plate number: {detected_text}")
+                # Menyimpan gambar hasil deteksi
+                save_detected_plate(image_path, detected_text, output_dir)
+            else:
+                print(f"Invalid plate number: {detected_text}")
 
-# Menjalankan proses
-process_images(input_folder, output_folder)
+# Tentukan folder input dan output
+input_folder = '/home/ep/Documents/Github/myenv/plate-detection-env/dataset/cropped_rlt/'
+output_folder = '/home/ep/Documents/Github/myenv/plate-detection-env/dataset/named_plate/'
+
+# Proses setiap gambar dalam folder input
+for folder_name in os.listdir(input_folder):
+    folder_path = os.path.join(input_folder, folder_name)
+    if os.path.isdir(folder_path):
+        output_subfolder = os.path.join(output_folder, folder_name)
+        if not os.path.exists(output_subfolder):
+            os.makedirs(output_subfolder)
+        
+        # Proses setiap gambar dalam subfolder
+        for image_name in os.listdir(folder_path):
+            if image_name.endswith('.jpg') or image_name.endswith('.png'):
+                image_path = os.path.join(folder_path, image_name)
+                process_image(image_path, output_subfolder)
