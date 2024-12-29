@@ -1,52 +1,64 @@
 import os
-import keras_ocr
+import pytesseract
+from PIL import Image
 import re
 import shutil
 
-# Path ke folder dataset
-source_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/cropped_rlt"
-destination_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/named_plate"
+# Fungsi untuk membaca dan mendeteksi plat nomor
+def detect_plate_number(image_path):
+    # Membaca gambar
+    img = Image.open(image_path)
+    
+    # Menggunakan pytesseract untuk mengekstrak teks dari gambar
+    extracted_text = pytesseract.image_to_string(img, config='--psm 8').strip()
+    
+    # Menentukan pola untuk plat nomor sesuai dengan yang Anda jelaskan
+    # Pola plat nomor: Digit awal (asal kota), Digit tengah (kategori kendaraan), Digit belakang (jenis kendaraan)
+    pattern = r"([A-Z]{1,2})\s*(\d{1,4})\s*([A-Z0-9]{1,4})"
+    match = re.match(pattern, extracted_text)
+    
+    if match:
+        asal_kota = match.group(1)
+        kategori_kendaraan = match.group(2)
+        jenis_kendaraan = match.group(3)
+        
+        # Menggabungkan hasil deteksi menjadi nama file baru
+        detected_plate_number = f"{asal_kota}{kategori_kendaraan}{jenis_kendaraan}"
+        return detected_plate_number
+    else:
+        return None
 
-# Pola regex untuk plat nomor
-plate_pattern = re.compile(r"^(AA|AD|K|R|G|H|AB|D|F|E|Z|T|A|B|AG|AE|L|M|N|S|W|P|DK|ED|EA|EB|DH|DR|KU|KT|DA|KB|KH|DC|DD|DN|DT|DL|DM|DB|BA|BB|BD|BE|BG|BH|BK|BL|BM|BN|DE|DG|PA|PB)\\s*\\d{1,4}\\s*[A-Z0-9]{0,4}$")
+# Fungsi untuk memindahkan dan mengganti nama gambar
+def process_images(input_folder, output_folder):
+    # Membaca semua subfolder dan gambar dalam folder input
+    for root, dirs, files in os.walk(input_folder):
+        for file in files:
+            if file.endswith(('jpg', 'jpeg', 'png')):
+                image_path = os.path.join(root, file)
+                
+                # Deteksi plat nomor dari gambar
+                plate_number = detect_plate_number(image_path)
+                
+                if plate_number:
+                    # Membuat folder output berdasarkan folder asal
+                    relative_path = os.path.relpath(root, input_folder)
+                    new_folder = os.path.join(output_folder, 'named_plate', relative_path, plate_number)
+                    
+                    # Membuat folder jika belum ada
+                    os.makedirs(new_folder, exist_ok=True)
+                    
+                    # Membuat path baru untuk gambar dengan nama hasil deteksi
+                    new_image_path = os.path.join(new_folder, f"{plate_number}.jpg")
+                    
+                    # Menyalin gambar ke folder tujuan dengan nama baru
+                    shutil.copy(image_path, new_image_path)
+                    print(f"Processed {image_path} -> {new_image_path}")
+                else:
+                    print(f"Failed to detect plate number in {image_path}")
+            
+# Path ke folder input dan output
+input_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/cropped_rlt"
+output_folder = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset"
 
-# Membuat pipeline Keras-OCR
-pipeline = keras_ocr.pipeline.Pipeline()
-
-# Membaca folder asli
-for folder_name in os.listdir(source_folder):
-    original_folder_path = os.path.join(source_folder, folder_name)
-    if not os.path.isdir(original_folder_path):
-        continue
-
-    # Path folder hasil deteksi
-    result_folder_path = os.path.join(destination_folder, folder_name)
-    os.makedirs(result_folder_path, exist_ok=True)
-
-    # Iterasi setiap gambar di folder asli
-    for image_name in os.listdir(original_folder_path):
-        image_path = os.path.join(original_folder_path, image_name)
-        if not image_name.lower().endswith((".png", ".jpg", ".jpeg")):
-            continue
-
-        # Deteksi teks dari gambar
-        try:
-            images = [keras_ocr.tools.read(image_path)]
-            predictions = pipeline.recognize(images)
-            detected_text = " ".join([word[0] for word in predictions[0]])
-
-            # Validasi teks menggunakan pola plat nomor
-            detected_text = detected_text.replace(" ", "")
-            if plate_pattern.match(detected_text):
-                new_image_name = f"{detected_text}.png"
-            else:
-                new_image_name = f"invalid_{image_name}"
-        except Exception as e:
-            print(f"Error processing {image_path}: {e}")
-            new_image_name = f"error_{image_name}"
-
-        # Menyalin dan mengganti nama gambar hasil deteksi
-        result_image_path = os.path.join(result_folder_path, new_image_name)
-        shutil.copy(image_path, result_image_path)
-
-print("Proses selesai. Folder hasil deteksi berada di:", destination_folder)
+# Menjalankan proses
+process_images(input_folder, output_folder)
