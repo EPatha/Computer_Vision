@@ -13,6 +13,28 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 from tensorflow.keras.utils import to_categorical
 import pytesseract
 
+def ocr_recognition(image):
+    """Recognize characters using OCR (Tesseract)."""
+    text = pytesseract.image_to_string(image, config='--psm 6')
+    print(f"Recognized Text: {text}")  # Debugging step
+    return text
+features_all = []  # Menyimpan semua fitur untuk PCA
+
+# Contoh kode untuk ekstraksi fitur
+for image_path in image_paths:
+    # Ekstraksi HOG atau template features
+    features_all.append(extracted_features)
+
+if len(features_all) > 1:
+    pca = PCA(n_components=50)
+    features_all_reduced = pca.fit_transform(features_all)
+# Dalam bagian rekonstruksi string
+predicted_text = ocr_recognition(image)  # Gunakan hasil OCR untuk mengidentifikasi plat nomor
+if predicted_text.strip():  # Pastikan tidak kosong
+    plate_string = predicted_text.strip()
+else:
+    print("OCR failed to recognize text.")
+
 # Step 1: Feature Extraction
 def extract_hog_features(image):
     """Extract HOG features from an image."""
@@ -59,10 +81,23 @@ def train_and_classify_cnn(images, labels):
     model.fit(images, labels, epochs=10, batch_size=32, validation_split=0.2)
     return model
 
+# Step 5: Plate Number Reconstruction
+def reconstruct_plate_string(predicted_chars):
+    """Reconstruct plate string from classified characters."""
+    plate_string = ''.join(predicted_chars)  # Gabungkan hasil karakter yang telah dikenali
+    return plate_string
+
+
+def save_reconstructed_plate(image_name, plate_string, save_path):
+    """Save reconstructed plate string as a text file."""
+    os.makedirs(save_path, exist_ok=True)
+    output_file = os.path.join(save_path, f"{os.path.splitext(image_name)[0]}.txt")
+    with open(output_file, 'w') as f:
+        f.write(plate_string)
+
 # Main Function to Process Dataset
-def process_dataset_and_classify(dataset_path, save_path, classification_method="OCR"):
+def process_dataset_and_reconstruct(dataset_path, detected_plate_path, classification_method="OCR"):
     image_paths = glob.glob(os.path.join(dataset_path, "**", "*.*"), recursive=True)
-    features, labels = [], []
 
     for image_path in image_paths:
         try:
@@ -70,38 +105,33 @@ def process_dataset_and_classify(dataset_path, save_path, classification_method=
             if image is None:
                 raise ValueError(f"Failed to read image: {image_path}")
 
-            # Resize for CNN if needed
-            resized_image = cv2.resize(image, (28, 28))
-
+            # Classify each character
             if classification_method == "OCR":
-                label = classify_with_ocr(image)
-                print(f"OCR result for {image_path}: {label}")
+                classified_chars = []
+                for char_image_path in glob.glob(os.path.join(image_path, "*")):
+                    char_image = cv2.imread(char_image_path, cv2.IMREAD_GRAYSCALE)
+                    if char_image is not None:
+                        classified_chars.append(classify_with_ocr(char_image))
 
-            elif classification_method == "SVM":
-                hog_features = extract_hog_features(image)
-                label = os.path.basename(os.path.dirname(image_path))  # Assuming folder names are labels
-                features.append(hog_features)
-                labels.append(label)
+            elif classification_method in ["SVM", "CNN"]:
+                # Assume features and labels have been trained for SVM or CNN
+                raise NotImplementedError(f"Classification method '{classification_method}' not yet implemented in this step.")
 
-            elif classification_method == "CNN":
-                label = os.path.basename(os.path.dirname(image_path))  # Assuming folder names are labels
-                features.append(resized_image)
-                labels.append(label)
+            # Reconstruct plate string
+            plate_string = reconstruct_plate_string(classified_chars)
+            print(f"Reconstructed plate for {image_path}: {plate_string}")
+
+            # Save reconstructed plate string
+            save_reconstructed_plate(os.path.basename(image_path), plate_string, detected_plate_path)
 
         except Exception as e:
             print(f"Error processing {image_path}: {e}")
 
-    # Train classifier based on the method
-    if classification_method == "SVM":
-        train_and_classify_svm(features, labels)
-    elif classification_method == "CNN":
-        train_and_classify_cnn(features, labels)
-
 if __name__ == "__main__":
     dataset_path = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/segmentasi/"
-    save_path = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/ekstrak/"
+    detected_plate_path = "/home/ep/Documents/Github/myenv/plate-detection-env/dataset/detected_plate/"
 
     # Choose classification method: "OCR", "SVM", or "CNN"
     classification_method = "OCR"  # Change to "SVM" or "CNN" as needed
 
-    process_dataset_and_classify(dataset_path, save_path, classification_method)
+    process_dataset_and_reconstruct(dataset_path, detected_plate_path, classification_method)
