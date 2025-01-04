@@ -4,6 +4,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import accuracy_score
+from imblearn.over_sampling import SMOTE
+import joblib
 
 def load_fen_data(input_dir):
     fen_data = []
@@ -38,9 +40,15 @@ y = np.array(labels)  # Label kategori
 # Split data menjadi train dan test
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+# Coba mengurangi n_neighbors untuk menangani kelas dengan sedikit sampel
+smote = SMOTE(sampling_strategy='auto', k_neighbors=1, random_state=42)
+
+# Lakukan resampling pada data train
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+
 # Membuat model machine learning (contoh: Naive Bayes)
 model = MultinomialNB()
-model.fit(X_train, y_train)
+model.fit(X_train_resampled, y_train_resampled)  # Latih model dengan data yang sudah di-resample
 
 # Prediksi pada data test
 y_pred = model.predict(X_test)
@@ -50,6 +58,5 @@ accuracy = accuracy_score(y_test, y_pred)
 print(f"Accuracy: {accuracy * 100:.2f}%")
 
 # Menyimpan model dan vektorisator untuk penggunaan lebih lanjut
-import joblib
 joblib.dump(model, 'chess_opening_classifier_model.pkl')
 joblib.dump(vectorizer, 'vectorizer.pkl')
