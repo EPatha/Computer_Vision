@@ -20,9 +20,8 @@ def load_fen_data(input_dir):
                     fen = file.read().strip()  # Mengambil FEN dari file
                     fen_data.append(fen)  # Menambahkan FEN ke list
                     
-                    # Tentukan label dari folder teratas (misalnya, nama folder Benoni, Caro-Kann, dsb.)
-                    # Label diambil dari nama folder teratas dalam path
-                    category = os.path.basename(os.path.dirname(root))
+                    # Tentukan label hanya berdasarkan nama folder teratas (kategori pembukaan)
+                    category = os.path.basename(os.path.basename(root))  # Nama folder teratas sebagai label
                     labels.append(category)  # Menambahkan label kategori
                     
     return fen_data, labels
