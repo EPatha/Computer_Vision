@@ -1,0 +1,6 @@
+path: /home/ep/Documents/Github/Computer_Vision/Klasifikasi_Chess/detect_catur/data/klasifikasi
+train: images/train
+val: images/val
+nc: 12  # Jumlah kelas (13 buah catur)
+names: ['Pawn_White', 'Pawn_Black', 'King_White', 'King_Black', 'Queen_White', 'Queen_Black', 'Rook_White', 'Rook_Black', 'Knight_White', 'Knight_Black', 'Bishop_White', 'Bishop_Black']
+
